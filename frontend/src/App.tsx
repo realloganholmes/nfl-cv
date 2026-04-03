@@ -115,7 +115,6 @@ export default function App() {
     if (!frame) return;
     frame.detections.forEach((det) => {
       if (!det.field_position) return;
-      if (!showPlayers) return;
 
       const [fx, fy] = det.field_position;
       const safeX = Math.max(0, Math.min(FIELD_SOURCE_WIDTH, fx));
@@ -334,7 +333,7 @@ export default function App() {
                         checked={showPlayers}
                         onChange={(event) => setShowPlayers(event.target.checked)}
                       />
-                      Players
+                      Show Players
                     </label>
                   </div>
                 </div>
