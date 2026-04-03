@@ -17,6 +17,7 @@ export interface DetectionFrame {
   timestamp_ms: number;
   detections: Array<{
     bbox: [number, number, number, number];
+    track_id?: number;
     class_id: number;
     class_name: string;
     confidence: number;

@@ -33,12 +33,14 @@ export default function App() {
   const [showPlayers, setShowPlayers] = useState(true);
   const [fieldImageReady, setFieldImageReady] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const [visibleTrackIds, setVisibleTrackIds] = useState<Set<number>>(new Set());
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const fieldRef = useRef<HTMLCanvasElement | null>(null);
   const scrubberRef = useRef<HTMLCanvasElement | null>(null);
   const fieldImageRef = useRef<HTMLImageElement | null>(null);
+  const pendingSeekRef = useRef<number | null>(null);
 
   const loadPlays = async () => {
     setIsLoading(true);
@@ -101,6 +103,32 @@ export default function App() {
     return map;
   }, [results]);
 
+  const trackedPlayers = useMemo(() => {
+    if (!results) return [];
+    const players = new Map<number, { track_id: number; class_id: number; class_name: string }>();
+    results.frames.forEach((frame) => {
+      frame.detections.forEach((det) => {
+        if (typeof det.track_id !== "number") return;
+        if (!players.has(det.track_id)) {
+          players.set(det.track_id, {
+            track_id: det.track_id,
+            class_id: det.class_id,
+            class_name: det.class_name,
+          });
+        }
+      });
+    });
+    return Array.from(players.values()).sort((a, b) => a.track_id - b.track_id);
+  }, [results]);
+
+  useEffect(() => {
+    if (trackedPlayers.length === 0) {
+      setVisibleTrackIds(new Set());
+      return;
+    }
+    setVisibleTrackIds(new Set(trackedPlayers.map((player) => player.track_id)));
+  }, [trackedPlayers]);
+
   const drawField = (frame: DetectionFrame | null) => {
     const canvas = fieldRef.current;
     if (!canvas || !results) return;
@@ -119,6 +147,7 @@ export default function App() {
     ctx.textBaseline = "middle";
     frame.detections.forEach((det) => {
       if (!det.field_position) return;
+      if (typeof det.track_id === "number" && !visibleTrackIds.has(det.track_id)) return;
 
       const [fx, fy] = det.field_position;
       const safeX = Math.max(0, Math.min(FIELD_SOURCE_WIDTH, fx));
@@ -159,6 +188,7 @@ export default function App() {
 
     frame.detections.forEach((det) => {
       if (!showPlayers) return;
+      if (typeof det.track_id === "number" && !visibleTrackIds.has(det.track_id)) return;
       const [x1, y1, x2, y2] = det.bbox;
       const color = PLAYER_COLORS[Math.abs(det.class_id) % PLAYER_COLORS.length];
       const label = det.class_name || String(det.class_id);
@@ -185,8 +215,10 @@ export default function App() {
     const total = results.frames.length;
     if (total === 0) return;
     const barWidth = width / total;
+    const isPostSnapValue = (value: unknown) =>
+      value === true || value === "true" || value === 1;
     results.frames.forEach((frame, idx) => {
-      ctx.fillStyle = frame.is_post_snap ? "#f97316" : "#1e293b";
+      ctx.fillStyle = isPostSnapValue(frame.is_post_snap as unknown) ? "#f97316" : "#1e293b";
       ctx.fillRect(idx * barWidth, 0, Math.max(1, barWidth), height);
     });
   };
@@ -221,6 +253,25 @@ export default function App() {
     drawField(frame);
   };
 
+  const seekToTime = (timeSeconds: number) => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    if (video.readyState >= 1) {
+      video.currentTime = timeSeconds;
+      onTimeUpdate();
+    } else {
+      pendingSeekRef.current = timeSeconds;
+    }
+  };
+
+  const onLoadedMetadata = () => {
+    if (pendingSeekRef.current !== null && videoRef.current) {
+      videoRef.current.currentTime = pendingSeekRef.current;
+      pendingSeekRef.current = null;
+    }
+    onTimeUpdate();
+  };
+
   const seekToScrubberPosition = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!results || !videoRef.current) return;
     const target = event.currentTarget;
@@ -231,8 +282,7 @@ export default function App() {
       0,
       Math.min(results.frames.length - 1, Math.floor(ratio * results.frames.length)),
     );
-    videoRef.current.currentTime = targetFrame / results.video.fps;
-    onTimeUpdate();
+    seekToTime(targetFrame / results.video.fps);
   };
 
   const onScrubberPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -255,18 +305,43 @@ export default function App() {
 
   const onGoToSnap = () => {
     if (!results || !videoRef.current) return;
+    const isPostSnapValue = (value: unknown) =>
+      value === true || value === "true" || value === 1;
     const orderedFrames = [...results.frames].sort(
       (a, b) => a.frame_index - b.frame_index,
     );
     let targetFrame = orderedFrames.length > 0 ? orderedFrames[0].frame_index : 0;
-    const firstPostIndex = orderedFrames.findIndex((frame) => frame.is_post_snap);
+    const firstPostIndex = orderedFrames.findIndex((frame) =>
+      isPostSnapValue(frame.is_post_snap as unknown),
+    );
     if (firstPostIndex > 0) {
       targetFrame = orderedFrames[firstPostIndex - 1].frame_index;
     } else if (firstPostIndex === -1 && orderedFrames.length > 0) {
       targetFrame = orderedFrames[orderedFrames.length - 1].frame_index;
     }
-    videoRef.current.currentTime = targetFrame / results.video.fps;
-    onTimeUpdate();
+    seekToTime(targetFrame / results.video.fps);
+  };
+
+  const onTogglePlayer = (trackId: number) => {
+    setVisibleTrackIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(trackId)) {
+        next.delete(trackId);
+      } else {
+        next.add(trackId);
+      }
+      return next;
+    });
+  };
+
+  const onToggleAllPlayers = () => {
+    if (trackedPlayers.length === 0) return;
+    setVisibleTrackIds((prev) => {
+      if (prev.size === trackedPlayers.length) {
+        return new Set();
+      }
+      return new Set(trackedPlayers.map((player) => player.track_id));
+    });
   };
 
   const currentStatus = selectedPlay?.status ?? "queued";
@@ -391,7 +466,7 @@ export default function App() {
                       controls
                       className="w-full h-auto"
                       onTimeUpdate={onTimeUpdate}
-                      onLoadedMetadata={onTimeUpdate}
+                      onLoadedMetadata={onLoadedMetadata}
                     />
                     <canvas
                       ref={overlayRef}
@@ -441,6 +516,36 @@ export default function App() {
                       Go to snap
                     </button>
                   </div>
+                  {trackedPlayers.length > 0 && (
+                    <div className="rounded-lg bg-slate-900 border border-slate-800 p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-xs text-slate-400">Detected players</div>
+                        <button
+                          className="text-xs text-slate-300 hover:text-white"
+                          onClick={onToggleAllPlayers}
+                        >
+                          {visibleTrackIds.size === trackedPlayers.length ? "Hide all" : "Show all"}
+                        </button>
+                      </div>
+                      <div className="grid gap-2">
+                        {trackedPlayers.map((player) => {
+                          const color = PLAYER_COLORS[Math.abs(player.class_id) % PLAYER_COLORS.length];
+                          const label = player.class_name || String(player.class_id);
+                          return (
+                            <label key={player.track_id} className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={visibleTrackIds.has(player.track_id)}
+                                onChange={() => onTogglePlayer(player.track_id)}
+                              />
+                              <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
+                              {label} #{player.track_id}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">

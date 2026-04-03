@@ -27,7 +27,9 @@ def _create_tracker() -> Any:
         raise
 
 
-def _init_trackers(detections: list[dict[str, Any]], frame: np.ndarray) -> list[dict[str, Any]]:
+def _init_trackers(
+    detections: list[dict[str, Any]], frame: np.ndarray, next_track_id: int
+) -> tuple[list[dict[str, Any]], int]:
     trackers: list[dict[str, Any]] = []
     for det in detections:
         tracker = _create_tracker()
@@ -36,13 +38,30 @@ def _init_trackers(detections: list[dict[str, Any]], frame: np.ndarray) -> list[
         trackers.append(
             {
                 "tracker": tracker,
+                "track_id": next_track_id,
                 "class_id": det["class_id"],
                 "class_name": det["class_name"],
                 "confidence": det["confidence"],
                 "bbox": [float(x1), float(y1), float(x2), float(y2)],
             }
         )
-    return trackers
+        next_track_id += 1
+    return trackers, next_track_id
+
+
+def _trackers_to_detections(trackers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    detections: list[dict[str, Any]] = []
+    for item in trackers:
+        detections.append(
+            {
+                "bbox": item["bbox"],
+                "track_id": item["track_id"],
+                "class_id": item["class_id"],
+                "class_name": item["class_name"],
+                "confidence": item["confidence"],
+            }
+        )
+    return detections
 
 
 def _update_trackers(trackers: list[dict[str, Any]], frame: np.ndarray) -> list[dict[str, Any]]:
@@ -53,15 +72,7 @@ def _update_trackers(trackers: list[dict[str, Any]], frame: np.ndarray) -> list[
         if success:
             x, y, w, h = bbox
             item["bbox"] = [float(x), float(y), float(x + w), float(y + h)]
-        detections.append(
-            {
-                "bbox": item["bbox"],
-                "class_id": item["class_id"],
-                "class_name": item["class_name"],
-                "confidence": item["confidence"],
-            }
-        )
-    return detections
+    return _trackers_to_detections(trackers)
 
 
 def _to_payload(result: Any) -> Any:
@@ -182,6 +193,11 @@ def _map_to_field(x: float, y: float, matrix: np.ndarray) -> tuple[float, float]
     return float(field_x), float(field_y)
 
 
+def _normalize_snap_label(label: str) -> str:
+    normalized = label.strip().lower().replace("_", " ").replace("-", " ")
+    return " ".join(normalized.split())
+
+
 def _snap_state(result: Any, threshold: float) -> tuple[bool, float | None]:
     if result is None:
         return False, None
@@ -215,7 +231,11 @@ def _snap_state(result: Any, threshold: float) -> tuple[bool, float | None]:
             score = float(getattr(result, "confidence"))
 
     if label:
-        return label.strip().lower() == "postsnap", score
+        normalized = _normalize_snap_label(label)
+        if normalized in {"postsnap", "post snap"}:
+            return True, score
+        if normalized in {"presnap", "pre snap"}:
+            return False, score
 
     try:
         detections = sv.Detections.from_inference(result)
@@ -251,6 +271,7 @@ def process_video(input_path: str, output_dir: str, settings: NFLCVSettings) -> 
     frames = []
     homography_matrix = None
     trackers: list[dict[str, Any]] = []
+    next_track_id = 0
 
     frame_idx = 0
     while True:
@@ -271,7 +292,8 @@ def process_video(input_path: str, output_dir: str, settings: NFLCVSettings) -> 
                 result = player_model.infer(frame)[0]
                 detections = _extract_boxes(result)
                 if detections:
-                    trackers = _init_trackers(detections, frame)
+                    trackers, next_track_id = _init_trackers(detections, frame, next_track_id)
+                    detections = _trackers_to_detections(trackers)
 
         for det in detections:
             x1, y1, x2, y2 = det["bbox"]
