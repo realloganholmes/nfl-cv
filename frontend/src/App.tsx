@@ -201,8 +201,8 @@ export default function App() {
           }
         });
         ctx.strokeStyle = color;
-        ctx.globalAlpha = 0.55;
-        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.85;
+        ctx.lineWidth = 3;
         ctx.stroke();
         ctx.globalAlpha = 1;
       });
