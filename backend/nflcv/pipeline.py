@@ -131,7 +131,7 @@ def _map_to_field(x: float, y: float, matrix: np.ndarray) -> tuple[float, float]
     point = np.array([[[x, y]]], dtype="float32")
     mapped = cv2.perspectiveTransform(point, matrix)
     field_x, field_y = mapped[0][0]
-    return float(FIELD_WIDTH - field_x), float(field_y)
+    return float(field_x), float(field_y)
 
 
 def _snap_score(result: Any) -> float | None:

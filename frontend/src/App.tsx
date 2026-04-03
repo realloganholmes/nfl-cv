@@ -19,6 +19,9 @@ const statusStyles: Record<string, string> = {
   failed: "bg-red-900 text-red-200",
 };
 
+const FIELD_SOURCE_WIDTH = 500;
+const FIELD_SOURCE_HEIGHT = 1100;
+
 export default function App() {
   const [view, setView] = useState<View>("home");
   const [plays, setPlays] = useState<PlaySummary[]>([]);
@@ -117,8 +120,11 @@ export default function App() {
       if (!showPlayers) return;
 
       const [fx, fy] = det.field_position;
-      const x = (fx / results.field.width) * (width - 32) + 16;
-      const y = (fy / results.field.height) * (height - 32) + 16;
+      const safeX = Math.max(0, Math.min(FIELD_SOURCE_WIDTH, fx));
+      const safeY = Math.max(0, Math.min(FIELD_SOURCE_HEIGHT, fy));
+      const flippedX = FIELD_SOURCE_WIDTH - safeX;
+      const x = (flippedX / FIELD_SOURCE_WIDTH) * (width - 32) + 16;
+      const y = (safeY / FIELD_SOURCE_HEIGHT) * (height - 32) + 16;
       ctx.fillStyle = "#fbbf24";
       ctx.beginPath();
       ctx.arc(x, y, 4, 0, Math.PI * 2);
