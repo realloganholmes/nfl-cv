@@ -17,6 +17,53 @@ def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def _create_tracker() -> Any:
+    try:
+        return cv2.TrackerCSRT_create()
+    except AttributeError:
+        legacy = getattr(cv2, "legacy", None)
+        if legacy is not None and hasattr(legacy, "TrackerCSRT_create"):
+            return legacy.TrackerCSRT_create()
+        raise
+
+
+def _init_trackers(detections: list[dict[str, Any]], frame: np.ndarray) -> list[dict[str, Any]]:
+    trackers: list[dict[str, Any]] = []
+    for det in detections:
+        tracker = _create_tracker()
+        x1, y1, x2, y2 = det["bbox"]
+        tracker.init(frame, (int(x1), int(y1), int(x2 - x1), int(y2 - y1)))
+        trackers.append(
+            {
+                "tracker": tracker,
+                "class_id": det["class_id"],
+                "class_name": det["class_name"],
+                "confidence": det["confidence"],
+                "bbox": [float(x1), float(y1), float(x2), float(y2)],
+            }
+        )
+    return trackers
+
+
+def _update_trackers(trackers: list[dict[str, Any]], frame: np.ndarray) -> list[dict[str, Any]]:
+    detections: list[dict[str, Any]] = []
+    for item in trackers:
+        tracker = item["tracker"]
+        success, bbox = tracker.update(frame)
+        if success:
+            x, y, w, h = bbox
+            item["bbox"] = [float(x), float(y), float(x + w), float(y + h)]
+        detections.append(
+            {
+                "bbox": item["bbox"],
+                "class_id": item["class_id"],
+                "class_name": item["class_name"],
+                "confidence": item["confidence"],
+            }
+        )
+    return detections
+
+
 def _to_payload(result: Any) -> Any:
     if hasattr(result, "model_dump"):
         return result.model_dump()
@@ -110,13 +157,14 @@ def _compute_homography(frame: np.ndarray, keypoint_model: Any, settings: NFLCVS
         return None
     result = keypoint_model.infer(frame)[0]
     image_points_and_labels = _extract_keypoints(result, settings.keypoint_confidence)
-    if len(image_points_and_labels) < 4:
+    valid_pairs = [
+        (tuple(point), FIELD_MAP[label])
+        for point, label in image_points_and_labels
+        if label in FIELD_MAP
+    ]
+    if len(valid_pairs) < 4:
         return None
-    image_points = [tuple(point) for point, _ in image_points_and_labels]
-    image_labels = [label for _, label in image_points_and_labels]
-    map_points = [FIELD_MAP[label] for label in image_labels if label in FIELD_MAP]
-    if len(map_points) < 4:
-        return None
+    image_points, map_points = zip(*valid_pairs)
     matrix, _ = cv2.findHomography(
         np.array(image_points, dtype="float32"),
         np.array(map_points, dtype="float32"),
@@ -175,8 +223,10 @@ def process_video(input_path: str, output_dir: str, settings: NFLCVSettings) -> 
 
     frames = []
     homography_matrix = None
+    trackers: list[dict[str, Any]] = []
 
-    for frame_idx in range(frame_count):
+    frame_idx = 0
+    while True:
         ret, frame = cap.read()
         if not ret:
             break
@@ -186,10 +236,15 @@ def process_video(input_path: str, output_dir: str, settings: NFLCVSettings) -> 
             if updated_matrix is not None:
                 homography_matrix = updated_matrix
 
-        detections = []
+        detections: list[dict[str, Any]] = []
         if player_model is not None:
-            result = player_model.infer(frame)[0]
-            detections.extend(_extract_boxes(result))
+            if trackers:
+                detections = _update_trackers(trackers, frame)
+            else:
+                result = player_model.infer(frame)[0]
+                detections = _extract_boxes(result)
+                if detections:
+                    trackers = _init_trackers(detections, frame)
 
         for det in detections:
             x1, y1, x2, y2 = det["bbox"]
@@ -210,13 +265,14 @@ def process_video(input_path: str, output_dir: str, settings: NFLCVSettings) -> 
                 "is_post_snap": snap_score is not None and snap_score >= settings.snap_threshold,
             }
         )
+        frame_idx += 1
 
     cap.release()
 
     results = {
         "video": {
             "fps": fps,
-            "frame_count": frame_count,
+            "frame_count": len(frames),
             "width": width,
             "height": height,
         },
