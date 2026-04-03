@@ -128,6 +128,14 @@ export default function App() {
     return [...results.frames].sort((a, b) => a.frame_index - b.frame_index);
   }, [results]);
 
+  const orderedFrameIndex = useMemo(() => {
+    const map = new Map<number, number>();
+    orderedFrames.forEach((frame, idx) => {
+      map.set(frame.frame_index, idx);
+    });
+    return map;
+  }, [orderedFrames]);
+
   const classIdByTrackId = useMemo(() => {
     const map = new Map<number, number>();
     trackedPlayers.forEach((player) => {
@@ -305,10 +313,32 @@ export default function App() {
 
   const onTimeUpdate = () => {
     if (!results || !videoRef.current) return;
-    const frameIndex = Math.floor(videoRef.current.currentTime * results.video.fps);
-    const frame = frameByIndex.get(frameIndex) || null;
+    let frameIndex = Math.floor(videoRef.current.currentTime * results.video.fps);
+    if (frameIndex >= results.frames.length) {
+      frameIndex = results.frames.length - 1;
+    }
+    let frame = frameByIndex.get(frameIndex) || null;
+    if (frame && frame.detections.length === 0) {
+      const startIdx = orderedFrameIndex.get(frame.frame_index) ?? -1;
+      for (let idx = startIdx - 1; idx >= 0; idx -= 1) {
+        const candidate = orderedFrames[idx];
+        if (candidate.detections.length > 0) {
+          frame = candidate;
+          break;
+        }
+      }
+    }
     drawOverlay(frame);
     drawField(frame);
+  };
+
+  const onVideoEnded = () => {
+    if (!results) return;
+    const lastWithDetections = [...orderedFrames].reverse().find((frame) => frame.detections.length > 0);
+    if (lastWithDetections) {
+      drawOverlay(lastWithDetections);
+      drawField(lastWithDetections);
+    }
   };
 
   const seekToTime = (timeSeconds: number) => {
@@ -553,6 +583,7 @@ export default function App() {
                       className="w-full h-auto"
                       onTimeUpdate={onTimeUpdate}
                       onLoadedMetadata={onLoadedMetadata}
+                      onEnded={onVideoEnded}
                     />
                     <canvas
                       ref={overlayRef}
