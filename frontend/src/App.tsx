@@ -21,6 +21,7 @@ const statusStyles: Record<string, string> = {
 
 const FIELD_SOURCE_WIDTH = 500;
 const FIELD_SOURCE_HEIGHT = 1100;
+const PLAYER_COLORS = ["#ef4444", "#22c55e", "#3b82f6", "#f59e0b", "#a855f7"];
 
 export default function App() {
   const [view, setView] = useState<View>("home");
@@ -113,6 +114,8 @@ export default function App() {
     ctx.drawImage(fieldImage, 16, 16, width - 32, height - 32);
 
     if (!frame) return;
+    ctx.font = "11px sans-serif";
+    ctx.textBaseline = "middle";
     frame.detections.forEach((det) => {
       if (!det.field_position) return;
 
@@ -122,10 +125,17 @@ export default function App() {
       const flippedX = FIELD_SOURCE_WIDTH - safeX;
       const x = (flippedX / FIELD_SOURCE_WIDTH) * (width - 32) + 16;
       const y = (safeY / FIELD_SOURCE_HEIGHT) * (height - 32) + 16;
-      ctx.fillStyle = "#fbbf24";
+      const color = PLAYER_COLORS[Math.abs(det.class_id) % PLAYER_COLORS.length];
+      const label = det.class_name || String(det.class_id);
+      ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(x, y, 4, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = "#0f172a";
+      ctx.lineWidth = 3;
+      ctx.strokeText(label, x + 8, y);
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillText(label, x + 8, y);
     });
   };
 
@@ -143,13 +153,22 @@ export default function App() {
     if (!frame) return;
     const scaleX = canvas.width / results.video.width;
     const scaleY = canvas.height / results.video.height;
+    ctx.font = "12px sans-serif";
+    ctx.textBaseline = "bottom";
 
     frame.detections.forEach((det) => {
       if (!showPlayers) return;
       const [x1, y1, x2, y2] = det.bbox;
-      ctx.strokeStyle = "#fbbf24";
+      const color = PLAYER_COLORS[Math.abs(det.class_id) % PLAYER_COLORS.length];
+      const label = det.class_name || String(det.class_id);
+      ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       ctx.strokeRect(x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY);
+      ctx.strokeStyle = "#0f172a";
+      ctx.lineWidth = 3;
+      ctx.strokeText(label, x1 * scaleX, Math.max(12, y1 * scaleY - 6));
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillText(label, x1 * scaleX, Math.max(12, y1 * scaleY - 6));
     });
   };
 
