@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlmodel
+pydantic-settings
+python-multipart
+opencv-contrib-python
+numpy
+roboflow
+inference
+supervision

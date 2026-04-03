@@ -1,0 +1,8 @@
+.env
+backend/data/
+backend/models/
+backend/storage/
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+*.pyc
