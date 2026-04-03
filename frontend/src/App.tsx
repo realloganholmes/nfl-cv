@@ -31,9 +31,11 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
 
   const [showPlayers, setShowPlayers] = useState(true);
+  const [showRoutes, setShowRoutes] = useState(true);
   const [fieldImageReady, setFieldImageReady] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [visibleTrackIds, setVisibleTrackIds] = useState<Set<number>>(new Set());
+  const [routeTrackIds, setRouteTrackIds] = useState<Set<number>>(new Set());
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -121,12 +123,28 @@ export default function App() {
     return Array.from(players.values()).sort((a, b) => a.track_id - b.track_id);
   }, [results]);
 
+  const orderedFrames = useMemo(() => {
+    if (!results) return [];
+    return [...results.frames].sort((a, b) => a.frame_index - b.frame_index);
+  }, [results]);
+
+  const classIdByTrackId = useMemo(() => {
+    const map = new Map<number, number>();
+    trackedPlayers.forEach((player) => {
+      map.set(player.track_id, player.class_id);
+    });
+    return map;
+  }, [trackedPlayers]);
+
   useEffect(() => {
     if (trackedPlayers.length === 0) {
       setVisibleTrackIds(new Set());
+      setRouteTrackIds(new Set());
       return;
     }
-    setVisibleTrackIds(new Set(trackedPlayers.map((player) => player.track_id)));
+    const ids = new Set(trackedPlayers.map((player) => player.track_id));
+    setVisibleTrackIds(ids);
+    setRouteTrackIds(new Set(ids));
   }, [trackedPlayers]);
 
   const drawField = (frame: DetectionFrame | null) => {
@@ -145,16 +163,56 @@ export default function App() {
     if (!frame) return;
     ctx.font = "11px sans-serif";
     ctx.textBaseline = "middle";
-    frame.detections.forEach((det) => {
-      if (!det.field_position) return;
-      if (typeof det.track_id === "number" && !visibleTrackIds.has(det.track_id)) return;
-
-      const [fx, fy] = det.field_position;
+    const frameIndex = frame.frame_index;
+    const toCanvasPoint = ([fx, fy]: [number, number]) => {
       const safeX = Math.max(0, Math.min(FIELD_SOURCE_WIDTH, fx));
       const safeY = Math.max(0, Math.min(FIELD_SOURCE_HEIGHT, fy));
       const flippedX = FIELD_SOURCE_WIDTH - safeX;
       const x = (flippedX / FIELD_SOURCE_WIDTH) * (width - 32) + 16;
       const y = (safeY / FIELD_SOURCE_HEIGHT) * (height - 32) + 16;
+      return { x, y };
+    };
+
+    if (showRoutes) {
+      const routes = new Map<number, Array<[number, number]>>();
+      orderedFrames.forEach((routeFrame) => {
+        if (routeFrame.frame_index > frameIndex) return;
+        routeFrame.detections.forEach((det) => {
+          if (typeof det.track_id !== "number") return;
+          if (!det.field_position) return;
+          const points = routes.get(det.track_id) ?? [];
+          points.push(det.field_position);
+          routes.set(det.track_id, points);
+        });
+      });
+      routes.forEach((points, trackId) => {
+        if (!visibleTrackIds.has(trackId)) return;
+        if (!routeTrackIds.has(trackId)) return;
+        if (points.length < 2) return;
+        const classId = classIdByTrackId.get(trackId) ?? 0;
+        const color = PLAYER_COLORS[Math.abs(classId) % PLAYER_COLORS.length];
+        ctx.beginPath();
+        points.forEach((point, idx) => {
+          const { x, y } = toCanvasPoint(point);
+          if (idx === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      });
+    }
+
+    frame.detections.forEach((det) => {
+      if (!det.field_position) return;
+      if (typeof det.track_id === "number" && !visibleTrackIds.has(det.track_id)) return;
+
+      const { x, y } = toCanvasPoint(det.field_position);
       const color = PLAYER_COLORS[Math.abs(det.class_id) % PLAYER_COLORS.length];
       const label = det.class_name || String(det.class_id);
       ctx.fillStyle = color;
@@ -229,7 +287,7 @@ export default function App() {
 
   useEffect(() => {
     onTimeUpdate();
-  }, [showPlayers, results, visibleTrackIds]);
+  }, [showPlayers, showRoutes, results, visibleTrackIds]);
 
   useEffect(() => {
     if (fieldImageReady) {
@@ -327,6 +385,28 @@ export default function App() {
       const next = new Set(prev);
       if (next.has(trackId)) {
         next.delete(trackId);
+        setRouteTrackIds((routes) => {
+          const nextRoutes = new Set(routes);
+          nextRoutes.delete(trackId);
+          return nextRoutes;
+        });
+      } else {
+        next.add(trackId);
+        setRouteTrackIds((routes) => {
+          const nextRoutes = new Set(routes);
+          nextRoutes.add(trackId);
+          return nextRoutes;
+        });
+      }
+      return next;
+    });
+  };
+
+  const onToggleRoute = (trackId: number) => {
+    setRouteTrackIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(trackId)) {
+        next.delete(trackId);
       } else {
         next.add(trackId);
       }
@@ -337,6 +417,12 @@ export default function App() {
   const onToggleAllPlayers = () => {
     if (trackedPlayers.length === 0) return;
     setVisibleTrackIds((prev) => {
+      if (prev.size === trackedPlayers.length) {
+        return new Set();
+      }
+      return new Set(trackedPlayers.map((player) => player.track_id));
+    });
+    setRouteTrackIds((prev) => {
       if (prev.size === trackedPlayers.length) {
         return new Set();
       }
@@ -509,6 +595,14 @@ export default function App() {
                       />
                       Show Players
                     </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={showRoutes}
+                        onChange={(event) => setShowRoutes(event.target.checked)}
+                      />
+                      Show Routes
+                    </label>
                     <button
                       className="px-3 py-1 rounded-md bg-slate-800 text-sm"
                       onClick={onGoToSnap}
@@ -540,6 +634,13 @@ export default function App() {
                               />
                               <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
                               {label} #{player.track_id}
+                              <input
+                                type="checkbox"
+                                checked={routeTrackIds.has(player.track_id)}
+                                onChange={() => onToggleRoute(player.track_id)}
+                                disabled={!visibleTrackIds.has(player.track_id)}
+                              />
+                              <span className="text-xs text-slate-400">Route</span>
                             </label>
                           );
                         })}
