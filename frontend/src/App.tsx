@@ -32,6 +32,7 @@ export default function App() {
 
   const [showPlayers, setShowPlayers] = useState(true);
   const [fieldImageReady, setFieldImageReady] = useState(false);
+  const [isScrubbing, setIsScrubbing] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -212,11 +213,50 @@ export default function App() {
     drawField(frame);
   };
 
-  const onScrubberClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
+  const seekToScrubberPosition = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!results || !videoRef.current) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const ratio = (event.clientX - rect.left) / rect.width;
-    const targetFrame = Math.max(0, Math.min(results.frames.length - 1, Math.floor(ratio * results.frames.length)));
+    const target = event.currentTarget;
+    const width = target.clientWidth || target.getBoundingClientRect().width || 1;
+    const offsetX = Math.max(0, Math.min(width, event.nativeEvent.offsetX));
+    const ratio = offsetX / width;
+    const targetFrame = Math.max(
+      0,
+      Math.min(results.frames.length - 1, Math.floor(ratio * results.frames.length)),
+    );
+    videoRef.current.currentTime = targetFrame / results.video.fps;
+    onTimeUpdate();
+  };
+
+  const onScrubberPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsScrubbing(true);
+    seekToScrubberPosition(event);
+  };
+
+  const onScrubberPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isScrubbing) return;
+    seekToScrubberPosition(event);
+  };
+
+  const onScrubberPointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setIsScrubbing(false);
+  };
+
+  const onGoToSnap = () => {
+    if (!results || !videoRef.current) return;
+    const orderedFrames = [...results.frames].sort(
+      (a, b) => a.frame_index - b.frame_index,
+    );
+    let targetFrame = orderedFrames.length > 0 ? orderedFrames[0].frame_index : 0;
+    const firstPostIndex = orderedFrames.findIndex((frame) => frame.is_post_snap);
+    if (firstPostIndex > 0) {
+      targetFrame = orderedFrames[firstPostIndex - 1].frame_index;
+    } else if (firstPostIndex === -1 && orderedFrames.length > 0) {
+      targetFrame = orderedFrames[orderedFrames.length - 1].frame_index;
+    }
     videoRef.current.currentTime = targetFrame / results.video.fps;
     onTimeUpdate();
   };
@@ -356,8 +396,15 @@ export default function App() {
                       ref={scrubberRef}
                       width={600}
                       height={16}
-                      className="cursor-pointer"
-                      onClick={onScrubberClick}
+                      className="cursor-ew-resize"
+                      onPointerDown={onScrubberPointerDown}
+                      onPointerMove={onScrubberPointerMove}
+                      onPointerUp={onScrubberPointerUp}
+                      onPointerLeave={(event) => {
+                        if (isScrubbing) {
+                          onScrubberPointerUp(event);
+                        }
+                      }}
                     />
                     <div className="flex gap-4 text-xs text-slate-400 mt-2">
                       <div className="flex items-center gap-2">
@@ -379,6 +426,12 @@ export default function App() {
                       />
                       Show Players
                     </label>
+                    <button
+                      className="px-3 py-1 rounded-md bg-slate-800 text-sm"
+                      onClick={onGoToSnap}
+                    >
+                      Go to snap
+                    </button>
                   </div>
                 </div>
 
