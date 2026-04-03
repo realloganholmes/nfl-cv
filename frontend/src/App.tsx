@@ -229,7 +229,7 @@ export default function App() {
 
   useEffect(() => {
     onTimeUpdate();
-  }, [showPlayers, results]);
+  }, [showPlayers, results, visibleTrackIds]);
 
   useEffect(() => {
     if (fieldImageReady) {
