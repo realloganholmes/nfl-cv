@@ -332,6 +332,14 @@ export default function App() {
     drawField(frame);
   };
 
+  const frameToTimeSeconds = (frame: DetectionFrame) => {
+    if (!results) return 0;
+    if (typeof frame.timestamp_ms === "number") {
+      return frame.timestamp_ms / 1000;
+    }
+    return frame.frame_index / results.video.fps;
+  };
+
   const onVideoEnded = () => {
     if (!results) return;
     const lastWithDetections = [...orderedFrames].reverse().find((frame) => frame.detections.length > 0);
@@ -344,19 +352,39 @@ export default function App() {
   const seekToTime = (timeSeconds: number) => {
     if (!videoRef.current) return;
     const video = videoRef.current;
+    const targetTime = Number.isFinite(video.duration)
+      ? Math.max(0, Math.min(timeSeconds, video.duration))
+      : Math.max(0, timeSeconds);
+    const performSeek = () => {
+      if (videoRef.current) {
+        videoRef.current.currentTime = targetTime;
+      }
+    };
     if (video.readyState >= 1) {
-      video.currentTime = timeSeconds;
-      onTimeUpdate();
+      setTimeout(performSeek, 0);
     } else {
-      pendingSeekRef.current = timeSeconds;
+      pendingSeekRef.current = targetTime;
     }
+    setTimeout(() => {
+      onTimeUpdate();
+    }, 50);
   };
 
   const onLoadedMetadata = () => {
     if (pendingSeekRef.current !== null && videoRef.current) {
-      videoRef.current.currentTime = pendingSeekRef.current;
+      const target = pendingSeekRef.current;
+      pendingSeekRef.current = null;
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.currentTime = target;
+        }
+      }, 0);
       pendingSeekRef.current = null;
     }
+    onTimeUpdate();
+  };
+
+  const onSeeked = () => {
     onTimeUpdate();
   };
 
@@ -370,7 +398,10 @@ export default function App() {
       0,
       Math.min(results.frames.length - 1, Math.floor(ratio * results.frames.length)),
     );
-    seekToTime(targetFrame / results.video.fps);
+    const frame = orderedFrames[targetFrame];
+    if (frame) {
+      seekToTime(frameToTimeSeconds(frame));
+    }
   };
 
   const onScrubberPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -398,16 +429,18 @@ export default function App() {
     const orderedFrames = [...results.frames].sort(
       (a, b) => a.frame_index - b.frame_index,
     );
-    let targetFrame = orderedFrames.length > 0 ? orderedFrames[0].frame_index : 0;
+    let targetFrame = orderedFrames.length > 0 ? orderedFrames[0] : null;
     const firstPostIndex = orderedFrames.findIndex((frame) =>
       isPostSnapValue(frame.is_post_snap as unknown),
     );
     if (firstPostIndex > 0) {
-      targetFrame = orderedFrames[firstPostIndex - 1].frame_index;
+      targetFrame = orderedFrames[firstPostIndex - 1];
     } else if (firstPostIndex === -1 && orderedFrames.length > 0) {
-      targetFrame = orderedFrames[orderedFrames.length - 1].frame_index;
+      targetFrame = orderedFrames[orderedFrames.length - 1];
     }
-    seekToTime(targetFrame / results.video.fps);
+    if (targetFrame) {
+      seekToTime(frameToTimeSeconds(targetFrame));
+    }
   };
 
   const onTogglePlayer = (trackId: number) => {
@@ -583,6 +616,7 @@ export default function App() {
                       className="w-full h-auto"
                       onTimeUpdate={onTimeUpdate}
                       onLoadedMetadata={onLoadedMetadata}
+                      onSeeked={onSeeked}
                       onEnded={onVideoEnded}
                     />
                     <canvas
