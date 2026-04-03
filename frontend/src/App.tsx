@@ -30,11 +30,13 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
 
   const [showPlayers, setShowPlayers] = useState(true);
+  const [fieldImageReady, setFieldImageReady] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const fieldRef = useRef<HTMLCanvasElement | null>(null);
   const scrubberRef = useRef<HTMLCanvasElement | null>(null);
+  const fieldImageRef = useRef<HTMLImageElement | null>(null);
 
   const loadPlays = async () => {
     setIsLoading(true);
@@ -48,6 +50,15 @@ export default function App() {
 
   useEffect(() => {
     loadPlays();
+  }, []);
+
+  useEffect(() => {
+    const image = new Image();
+    image.src = "/football-field.png";
+    image.onload = () => {
+      fieldImageRef.current = image;
+      setFieldImageReady(true);
+    };
   }, []);
 
   const openPlay = async (playId: string) => {
@@ -97,22 +108,9 @@ export default function App() {
     const width = canvas.width;
     const height = canvas.height;
     ctx.clearRect(0, 0, width, height);
-
-    ctx.fillStyle = "#0f172a";
-    ctx.fillRect(0, 0, width, height);
-    ctx.strokeStyle = "#1e293b";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(16, 16, width - 32, height - 32);
-
-    ctx.strokeStyle = "#334155";
-    ctx.lineWidth = 1;
-    for (let i = 1; i <= 10; i += 1) {
-      const y = (height - 32) * (i / 10) + 16;
-      ctx.beginPath();
-      ctx.moveTo(16, y);
-      ctx.lineTo(width - 16, y);
-      ctx.stroke();
-    }
+    const fieldImage = fieldImageRef.current;
+    if (!fieldImage) return;
+    ctx.drawImage(fieldImage, 16, 16, width - 32, height - 32);
 
     if (!frame) return;
     frame.detections.forEach((det) => {
@@ -181,6 +179,12 @@ export default function App() {
   useEffect(() => {
     onTimeUpdate();
   }, [showPlayers, results]);
+
+  useEffect(() => {
+    if (fieldImageReady) {
+      onTimeUpdate();
+    }
+  }, [fieldImageReady]);
 
   const onTimeUpdate = () => {
     if (!results || !videoRef.current) return;
