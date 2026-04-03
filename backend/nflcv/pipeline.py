@@ -182,25 +182,52 @@ def _map_to_field(x: float, y: float, matrix: np.ndarray) -> tuple[float, float]
     return float(field_x), float(field_y)
 
 
-def _snap_score(result: Any) -> float | None:
+def _snap_state(result: Any, threshold: float) -> tuple[bool, float | None]:
     if result is None:
-        return None
+        return False, None
     payload = _to_payload(result)
-    if isinstance(payload, dict) and "predictions" in payload:
-        confidences = []
-        for prediction in payload.get("predictions", []):
-            if "confidence" in prediction:
-                confidences.append(float(prediction["confidence"]))
-        if confidences:
-            return max(confidences)
+    label: str | None = None
+    score: float | None = None
+    if isinstance(payload, dict):
+        if "top" in payload:
+            label = str(payload.get("top") or "")
+            top_score = payload.get("confidence") or payload.get("top_confidence")
+            if top_score is not None:
+                score = float(top_score)
+        elif "predictions" in payload:
+            for prediction in payload.get("predictions", []):
+                conf = float(prediction.get("confidence", 0.0))
+                if score is None or conf > score:
+                    score = conf
+                    label = str(
+                        prediction.get("class_name")
+                        or prediction.get("class")
+                        or prediction.get("label")
+                        or ""
+                    )
+        elif "class" in payload or "class_name" in payload:
+            label = str(payload.get("class_name") or payload.get("class") or "")
+            if "confidence" in payload:
+                score = float(payload.get("confidence", 0.0))
+    else:
+        label = getattr(result, "top", None) or getattr(result, "class_name", None)
+        if hasattr(result, "confidence"):
+            score = float(getattr(result, "confidence"))
+
+    if label:
+        return label.strip().lower() == "postsnap", score
+
     try:
         detections = sv.Detections.from_inference(result)
         if detections is not None and detections.confidence is not None:
             if len(detections.confidence) > 0:
-                return float(detections.confidence.max())
+                score = float(detections.confidence.max())
     except Exception:
-        return None
-    return None
+        return False, None
+
+    if score is None:
+        return False, None
+    return score >= threshold, score
 
 
 def process_video(input_path: str, output_dir: str, settings: NFLCVSettings) -> str:
@@ -254,7 +281,7 @@ def process_video(input_path: str, output_dir: str, settings: NFLCVSettings) -> 
         snap_result = None
         if snap_model is not None:
             snap_result = snap_model.infer(frame)[0]
-        snap_score = _snap_score(snap_result)
+        is_post_snap, snap_score = _snap_state(snap_result, settings.snap_threshold)
 
         frames.append(
             {
@@ -262,7 +289,7 @@ def process_video(input_path: str, output_dir: str, settings: NFLCVSettings) -> 
                 "timestamp_ms": int((frame_idx / fps) * 1000),
                 "detections": detections,
                 "snap_score": snap_score,
-                "is_post_snap": snap_score is not None and snap_score >= settings.snap_threshold,
+                "is_post_snap": is_post_snap,
             }
         )
         frame_idx += 1

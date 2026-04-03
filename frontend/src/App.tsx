@@ -212,6 +212,15 @@ export default function App() {
     drawField(frame);
   };
 
+  const onScrubberClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!results || !videoRef.current) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = (event.clientX - rect.left) / rect.width;
+    const targetFrame = Math.max(0, Math.min(results.frames.length - 1, Math.floor(ratio * results.frames.length)));
+    videoRef.current.currentTime = targetFrame / results.video.fps;
+    onTimeUpdate();
+  };
+
   const currentStatus = selectedPlay?.status ?? "queued";
 
   return (
@@ -343,7 +352,23 @@ export default function App() {
                   </div>
                   <div className="rounded-lg bg-slate-900 border border-slate-800 p-3">
                     <div className="text-xs text-slate-400 mb-2">Pre/Post Snap</div>
-                    <canvas ref={scrubberRef} width={600} height={16} />
+                    <canvas
+                      ref={scrubberRef}
+                      width={600}
+                      height={16}
+                      className="cursor-pointer"
+                      onClick={onScrubberClick}
+                    />
+                    <div className="flex gap-4 text-xs text-slate-400 mt-2">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block w-3 h-3 rounded-full bg-slate-800" />
+                        Pre-snap
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block w-3 h-3 rounded-full bg-orange-500" />
+                        Post-snap
+                      </div>
+                    </div>
                   </div>
                   <div className="flex gap-3">
                     <label className="flex items-center gap-2 text-sm">
