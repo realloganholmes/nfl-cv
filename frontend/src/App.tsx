@@ -205,6 +205,14 @@ export default function App() {
     }
   }, [fieldImageReady]);
 
+  useEffect(() => {
+    const handleResize = () => {
+      onTimeUpdate();
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [results, showPlayers, fieldImageReady]);
+
   const onTimeUpdate = () => {
     if (!results || !videoRef.current) return;
     const frameIndex = Math.floor(videoRef.current.currentTime * results.video.fps);
